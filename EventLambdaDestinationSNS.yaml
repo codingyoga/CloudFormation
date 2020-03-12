@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  TransformExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+  TransformFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          from datetime import datetime, timedelta
+          import time
+          import boto3
+          client = boto3.client('logs')
+          def handler(event, context):
+              query = "fields @timestamp"
+              log_group = '/aws/lambda/createloaddata'
+              start_query_response = client.start_query(
+                                              logGroupName=log_group,
+                                              startTime=int((datetime.today() - timedelta(hours=5)).timestamp()),
+                                              endTime=int(datetime.now().timestamp()),
+                                              queryString=query,
+                                              )
+              query_id = start_query_response['queryId']
+              response = None
+              while response == None or response['status'] == 'Running':
+                  print('Waiting for query to complete ...')
+                  time.sleep(90)
+                  response = client.get_query_results(
+                                            queryId=query_id
+                                            )
+              result = {
+                     "statusCode": 200,
+                     "body": response
+              }
+              return result
+      Handler: index.handler
+      Timeout: 180
+      FunctionName: 'log_insights_lambda_march'
+      Runtime: python3.6
+      Role: !GetAtt TransformExecutionRole.Arn
+  TransformFunctionPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt TransformFunction.Arn
+      Principal: 'cloudformation.amazonaws.com'
+  asyncconfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: TransformFunction
+    Properties:
+      DestinationConfig:
+          OnSuccess:
+            Destination: arn:aws:sns:us-east-1:323611491278:logsinsight
+      FunctionName: 'log_insights_lambda_march'
+      MaximumEventAgeInSeconds: 300
+      MaximumRetryAttempts: 1
+      Qualifier: $LATEST
+  Schedule:
+    Type: AWS::Events::Rule
+    DependsOn: TransformFunction
+    Properties:
+      ScheduleExpression: "rate(1 day)"
+      State: ENABLED
+      Targets:
+        -
+          Id: launcher
+          Arn: !GetAtt TransformFunction.Arn
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: TransformFunction
+    Properties:
+      FunctionName: !Ref TransformFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Schedule.Arn

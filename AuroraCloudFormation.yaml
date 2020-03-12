@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  A basic CloudFormation template for an RDS Aurora cluster.
+Parameters:
+  DatabaseUsername:
+    AllowedPattern: '[a-zA-Z0-9]+'
+    ConstraintDescription: must be between 1 to 16 alphanumeric characters.
+    Description: >-
+      The database admin account user name, between 1 to 16 alphanumeric
+      characters.
+    MaxLength: '16'
+    MinLength: '1'
+    Type: String
+  DatabasePassword:
+    AllowedPattern: '[a-zA-Z0-9]+'
+    ConstraintDescription: must be between 8 to 41 alphanumeric characters.
+    Description: >-
+      The database admin account password, between 8 to 41 alphanumeric
+      characters.
+    MaxLength: '41'
+    MinLength: '8'
+    NoEcho: 'true'
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+Mappings:
+  '819518111491':
+    us-east-1:
+      Subnets:
+        - subnet-00000000
+        - subnet-00000001
+        - subnet-00000002
+      InstanceType: db.r4.large
+      BackupRetentionPeriod: 7
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Database Configuration
+        Parameters:
+          - DatabaseUsername
+          - DatabasePassword
+    ParameterLabels:
+      DatabaseUsername:
+        default: Database Username
+      DatabasePassword:
+        default: Database Password
+Resources:
+  DatabaseSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: CloudFormation managed DB subnet group.
+      SubnetIds: !FindInMap 
+        - !Ref 'AWS::AccountId'
+        - !Ref 'AWS::Region'
+        - Subnets
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: b66ae778-8915-40c7-9581-958f42a56e31
+  DatabaseCluster:
+    Type: 'AWS::RDS::DBCluster'
+    Properties:
+      Engine: aurora
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Ref DatabasePassword
+      BackupRetentionPeriod: !FindInMap 
+        - !Ref 'AWS::AccountId'
+        - !Ref 'AWS::Region'
+        - BackupRetentionPeriod
+      PreferredBackupWindow: '01:00-02:00'
+      PreferredMaintenanceWindow: 'mon:03:00-mon:04:00'
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VpcSecurityGroupIds:
+      - Fn::GetAtt: [ ServerSecurityGroup, GroupId ]
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: b0da2862-7973-4872-9462-3d8c98b1055e
+  DatabasePrimaryInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      Engine: aurora
+      PubliclyAccessible: 'true'
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: !FindInMap 
+        - !Ref 'AWS::AccountId'
+        - !Ref 'AWS::Region'
+        - InstanceType
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1af4d672-110c-4c51-ad50-99ce3c102d7c
+  DatabaseReplicaInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      Engine: aurora
+      PubliclyAccessible: true
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: !FindInMap 
+        - !Ref 'AWS::AccountId'
+        - !Ref 'AWS::Region'
+        - InstanceType
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+
+  ServerSecurityGroup:
+    # http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
+Outputs:
+  ClusterName:
+    Description: 'The name of the cluster.'
+    Value: !Ref DatabaseCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterName'
+  DNSName:
+    Description: 'The connection endpoint for the DB cluster.'
+    Value: !GetAtt 'DatabaseCluster.Endpoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}-DNSName'
+  DBName:
+    Description: 'The endpoint for the Database.'
+    Value: !GetAtt 'DatabasePrimaryInstance.Endpoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}-DBName'
+  DBPort:
+    Description: 'The port number on which the database accepts connections.'
+    Value: !GetAtt 'DatabasePrimaryInstance.Endpoint.Port'
+    Export:
+      Name: !Sub '${AWS::StackName}-port'
